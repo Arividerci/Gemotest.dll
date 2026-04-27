@@ -373,59 +373,7 @@ namespace Laboratory.Gemotest
 
                     primaryPlans.Add(p);
 
-                    // 3) алиquots внутри этой первичной пробирки
-                    var aliquotItems = b.Items.Where(x => x.Src.PrimarySampleId.HasValue).ToList();
-                    if (aliquotItems.Count == 0) continue;
-
-                    var aliquotGroups = aliquotItems.GroupBy(x => new AliquotPackKey(
-                        x.Src.ExecutionSampleId,
-                        GetBioKey(x.Src),
-                        x.Src.LocalizationId ?? "",
-                        x.Src.ExecutionTransportId ?? ""
-                    )).ToList();
-
-                    foreach (var ag in aliquotGroups)
-                    {
-                        var aliquotBins = BestFitDecreasing(ag.ToList());
-
-                        foreach (var ab in aliquotBins)
-                        {
-                            var a = new TubePlan
-                            {
-                                Parent = p,
-                                SampleId = ag.Key.ExecSampleId,
-                                SampleName = ab.Items.Count > 0 ? (ab.Items[0].Src.ExecutionSampleName ?? "") : "",
-                                TransportId = ag.Key.Transport ?? "",
-                                Utilize = false, 
-                                BiomaterialId = ResolveBiomaterialId(ag.Key.Bio),
-                                MicroBioBiomaterialId = ResolveMicroBioId(ag.Key.Bio),
-                                LocalizationId = ag.Key.Loc ?? "",
-                                UsedPercent = ab.Used
-                            };
-
-
-                            a.Services.Clear();
-
-                            foreach (var it in ab.Items)
-                            {
-                                var r = it.Src;
-                                int sc = r.ServiceCount <= 0 ? 1 : r.ServiceCount;
-                                double share = Capacity / sc;
-
-                                a.Services.Add(new TubeServicePlan
-                                {
-                                    ServiceId = r.ServiceId ?? "",
-                                    ComplexId = r.ComplexId ?? "",
-                                    UtilizationFlag = ResolveAliquotUtilizationFlag(it),
-                                    RefuseFlag = 0,
-                                    ServiceCount = sc,
-                                    SharePercent = share
-                                });
-                            }   
-
-                            primaryPlans.Add(a);
-                        }
-                    }
+                   
                 }
             }
             return primaryPlans;
