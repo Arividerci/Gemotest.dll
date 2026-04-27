@@ -1,4 +1,4 @@
-using SiMed.Clinic;
+﻿using SiMed.Clinic;
 using SiMed.Clinic.Logger;
 using SiMed.Laboratory;
 using System;
@@ -311,9 +311,6 @@ namespace Laboratory.Gemotest.SourseClass
                 if (!biomaterialsForService.Any())
                     continue;
 
-
-                bool allMandatory = service.service_type == 2;
-
                 foreach (var biom in biomaterialsForService)
                 {
                     if (biom == null || string.IsNullOrEmpty(biom.id))
@@ -331,22 +328,9 @@ namespace Laboratory.Gemotest.SourseClass
                         BioMaterials.Add(existing);
                     }
 
-                    if (allMandatory)
+                    if (!existing.Another.Contains(productIndex) &&  !existing.Chosen.Contains(productIndex) && !existing.Mandatory.Contains(productIndex))
                     {
-                        if (!existing.Mandatory.Contains(productIndex))
-                            existing.Mandatory.Add(productIndex);
-                        if (!existing.Chosen.Contains(productIndex))
-                            existing.Chosen.Add(productIndex);
-                    }
-                    else
-                    {
-
-                        if (!existing.Another.Contains(productIndex) &&
-                            !existing.Chosen.Contains(productIndex) &&
-                            !existing.Mandatory.Contains(productIndex))
-                        {
-                            existing.Another.Add(productIndex);
-                        }
+                        existing.Another.Add(productIndex);
                     }
                 }
             }
@@ -373,6 +357,7 @@ namespace Laboratory.Gemotest.SourseClass
                 .Where(b => b.Chosen.Count > 0 || b.Another.Count > 0 || b.Mandatory.Count > 0)
                 .ToList();
 
+             Console.WriteLine($"[AddBiomaterialsFromProducts] BioMaterials.Count = {BioMaterials.Count}");
         }
 
         public void DeleteObsoleteDetails()

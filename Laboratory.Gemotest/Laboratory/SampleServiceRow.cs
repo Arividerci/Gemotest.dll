@@ -7,14 +7,14 @@ namespace Laboratory.Gemotest
     public sealed class SampleServiceRow
     {
         public string ServiceId { get; set; }
-        public string ComplexId { get; set; } 
+        public string ComplexId { get; set; } // если услуга входит в маркетинговый комплекс
 
         public int ExecutionSampleId { get; set; }
         public string ExecutionSampleName { get; set; }
         public string ExecutionTransportId { get; set; }
         public bool ExecutionUtilize { get; set; }
 
-        public int? PrimarySampleId { get; set; } 
+        public int? PrimarySampleId { get; set; } // если есть - значит алиquot
         public string PrimarySampleName { get; set; }
         public string PrimaryTransportId { get; set; }
         public bool PrimaryUtilize { get; set; }
@@ -23,7 +23,7 @@ namespace Laboratory.Gemotest
         public string MicroBioBiomaterialId { get; set; }
         public string LocalizationId { get; set; }
 
-        public int ServiceCount { get; set; }
+        public int ServiceCount { get; set; } // доля: 100 / service_count
 
         public SampleServiceRow()
         {
@@ -49,8 +49,8 @@ namespace Laboratory.Gemotest
         public string ServiceId { get; set; }
         public string ComplexId { get; set; }
 
-        public int UtilizationFlag { get; set; } 
-        public int RefuseFlag { get; set; }      
+        public int UtilizationFlag { get; set; } // 0/1
+        public int RefuseFlag { get; set; }      // 0/1
 
         public int ServiceCount { get; set; }
         public double SharePercent { get; set; }
@@ -74,10 +74,11 @@ namespace Laboratory.Gemotest
         public string MicroBioBiomaterialId { get; set; }
         public string LocalizationId { get; set; }
 
+        // присваивается в sender-е после get_sample_identifiers
         public string SampleIdentifier { get; set; }
         public string PrimarySampleIdentifier { get; set; }
 
-        public TubePlan Parent { get; set; } 
+        public TubePlan Parent { get; set; } // null для первичной
 
         public double UsedPercent { get; set; }
         public List<TubeServicePlan> Services { get; set; }
@@ -111,7 +112,7 @@ namespace Laboratory.Gemotest
             public string DrawTransportId;
             public bool DrawUtilize;
 
-            public int UtilizationFlag; 
+            public int UtilizationFlag; // 0/1
 
             public double Share;
         }
@@ -283,6 +284,7 @@ namespace Laboratory.Gemotest
         {
             if (rows == null) throw new ArgumentNullException(nameof(rows));
 
+            // 0) подготовка work items
             var items = new List<WorkItem>(rows.Count);
             for (int i = 0; i < rows.Count; i++)
             {
@@ -302,11 +304,12 @@ namespace Laboratory.Gemotest
                     DrawSampleName = drawName,
                     DrawTransportId = drawTransport,
                     DrawUtilize = drawUtilize,
-                    UtilizationFlag = 0,
+                    UtilizationFlag = r.ExecutionUtilize ? 1 : 0,
                     Share = share
                 });
             }
 
+            // 1) merge utilize -> non-utilize (если совпали bio+loc+transport)
             var groupsForMerge = items.GroupBy(x => new MergeKey(GetBioKey(x.Src), x.Src.LocalizationId ?? "", x.DrawTransportId ?? "")).ToList();
             foreach (var g in groupsForMerge)
             {
@@ -326,6 +329,7 @@ namespace Laboratory.Gemotest
                 }
             }
 
+            // 2) бин-пэкинг первичных пробирок
             var primaryPlans = new List<TubePlan>();
             var itemsByPrimaryKey = items.GroupBy(x => new PrimaryPackKey(x.DrawSampleId, GetBioKey(x.Src), x.Src.LocalizationId ?? "", x.DrawTransportId ?? "")).ToList();
 
@@ -360,8 +364,8 @@ namespace Laboratory.Gemotest
                         {
                             ServiceId = r.ServiceId ?? "",
                             ComplexId = r.ComplexId ?? "",
-                            UtilizationFlag = it.UtilizationFlag,
-                            RefuseFlag = r.PrimarySampleId.HasValue ? 1 : 0,
+                            UtilizationFlag = ResolvePrimaryUtilizationFlag(it),
+                            RefuseFlag = 0,
                             ServiceCount = sc,
                             SharePercent = share
                         });
@@ -392,12 +396,15 @@ namespace Laboratory.Gemotest
                                 SampleId = ag.Key.ExecSampleId,
                                 SampleName = ab.Items.Count > 0 ? (ab.Items[0].Src.ExecutionSampleName ?? "") : "",
                                 TransportId = ag.Key.Transport ?? "",
-                                Utilize = false, // алиquot не "utilize"
+                                Utilize = false, 
                                 BiomaterialId = ResolveBiomaterialId(ag.Key.Bio),
                                 MicroBioBiomaterialId = ResolveMicroBioId(ag.Key.Bio),
                                 LocalizationId = ag.Key.Loc ?? "",
                                 UsedPercent = ab.Used
                             };
+
+
+                            a.Services.Clear();
 
                             foreach (var it in ab.Items)
                             {
@@ -409,19 +416,18 @@ namespace Laboratory.Gemotest
                                 {
                                     ServiceId = r.ServiceId ?? "",
                                     ComplexId = r.ComplexId ?? "",
-                                    UtilizationFlag = it.UtilizationFlag,
+                                    UtilizationFlag = ResolveAliquotUtilizationFlag(it),
                                     RefuseFlag = 0,
                                     ServiceCount = sc,
                                     SharePercent = share
                                 });
-                            }
+                            }   
 
                             primaryPlans.Add(a);
                         }
                     }
                 }
             }
-
             return primaryPlans;
         }
 
@@ -466,6 +472,32 @@ namespace Laboratory.Gemotest
             return bins;
         }
 
+        private static int ResolvePrimaryUtilizationFlag(WorkItem it)
+        {
+            if (it == null) return 0;
+
+            // 1) Если утильная проба была объединена с рабочей,
+            // этот флаг уже выставлен на этапе merge.
+            if (it.UtilizationFlag == 1)
+                return 1;
+
+            // 2) Если проба сама по себе утильная и не была объединена,
+            // всё равно нужно отправлять utilization_flag = 1.
+            if (it.DrawUtilize)
+                return 1;
+
+            return 0;
+        }
+
+        private static int ResolveAliquotUtilizationFlag(WorkItem it)
+        {
+            if (it == null || it.Src == null) return 0;
+
+            // Для дочерней aliquot-пробы флаг должен отражать именно execution-пробу,
+            // а не parent/draw-пробу.
+            return it.Src.ExecutionUtilize ? 1 : 0;
+        }
+
         private static BioKey GetBioKey(SampleServiceRow r)
         {
             if (!string.IsNullOrWhiteSpace(r.MicroBioBiomaterialId))
@@ -477,7 +509,7 @@ namespace Laboratory.Gemotest
         private static string ResolveBiomaterialId(BioKey key)
         {
             if (key.Kind == "BM") return key.Value;
-            return ""; 
+            return ""; // для микробиологии biomaterial_id может быть пустым
         }
 
         private static string ResolveMicroBioId(BioKey key)

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Xml;
@@ -16,12 +16,15 @@ using System.Windows.Forms;
 using Laboratory.Gemotest.SourseClass;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.ListView;
 using static Laboratory.Gemotest.SourseClass.GemotestOrderDetail;
+using System.Runtime.InteropServices;
 using Laboratory.Gemotest.GUI;
 namespace Laboratory.Gemotest
 {
 
     public class LaboratoryGemotest : ILaboratory
     {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AllocConsole();
 
         List<DictionaryService> ProductsGemotest;
 
@@ -33,6 +36,7 @@ namespace Laboratory.Gemotest
         public SystemOptions Options { get; set; }
         public Dictionaries Dicts { get; } = new Dictionaries();
 
+        private const string TestResultExtNum = "118569168";
         private Exception last_exception = new Exception("неизвестная ошибка");
         private INumerator numerator;
         private LaboratoryGemotestGUI laboratoryGUI;
@@ -248,7 +252,7 @@ namespace Laboratory.Gemotest
             {
                 details.Dicts = Dicts;
                 ApplyPriceListToDetails(details);
-                details.AddBiomaterialsFromProducts();
+                RebuildBiomaterialsKeepSelection(details);
             }
 
             details.DeleteObsoleteDetails();
@@ -312,7 +316,7 @@ namespace Laboratory.Gemotest
 
             details.Dicts = Dicts;
             ApplyPriceListToDetails(details);
-            details.AddBiomaterialsFromProducts();
+            RebuildBiomaterialsKeepSelection(details);
             details.DeleteObsoleteDetails();
 
             bool readOnly = _bReadOnly || _Order.State != OrderState.NotSended;
@@ -378,6 +382,8 @@ namespace Laboratory.Gemotest
 
                 var contractorCode = !string.IsNullOrEmpty(details.PriceListCode) ? details.PriceListCode : Options.Contractor_Code;
 
+                Console.WriteLine("### SENDORDER ДОШЕЛ ДО СОЗДАНИЯ GemotestOrderSender ### " + DateTime.Now.ToString("HH:mm:ss.fff"));
+
                 var sender = new GemotestOrderSender(
                     Options.UrlAdress,
                     contractorCode,
@@ -438,6 +444,98 @@ namespace Laboratory.Gemotest
             return false;
         }
 
+        private void RebuildBiomaterialsKeepSelection(GemotestOrderDetail details)
+        {
+            if (details == null)
+                return;
+
+            if (details.Products == null)
+                details.Products = new List<GemotestOrderDetail.GemotestProductDetail>();
+
+            if (details.BioMaterials == null)
+                details.BioMaterials = new List<GemotestBioMaterial>();
+
+            // Запоминаем выбранные биоматериалы по каждой услуге ДО пересборки
+            var oldSelectedByProductIndex = new Dictionary<int, HashSet<string>>();
+
+            for (int productIndex = 0; productIndex < details.Products.Count; productIndex++)
+            {
+                var selectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var bio in details.BioMaterials)
+                {
+                    if (bio == null || string.IsNullOrWhiteSpace(bio.Id))
+                        continue;
+
+                    if (bio.Chosen.Contains(productIndex) || bio.Mandatory.Contains(productIndex))
+                        selectedIds.Add(bio.Id);
+                }
+
+                if (selectedIds.Count > 0)
+                    oldSelectedByProductIndex[productIndex] = selectedIds;
+            }
+
+            // Полностью пересобираем связи "услуга -> допустимые биоматериалы"
+            details.BioMaterials.Clear();
+            details.AddBiomaterialsFromProducts();
+
+            foreach (var pair in oldSelectedByProductIndex)
+            {
+                int productIndex = pair.Key;
+                HashSet<string> oldSelectedIds = pair.Value;
+
+                if (productIndex < 0 || productIndex >= details.Products.Count)
+                    continue;
+
+                var linkedForProduct = details.BioMaterials
+                    .Where(b =>
+                        b != null &&
+                        (b.Mandatory.Contains(productIndex) ||
+                         b.Chosen.Contains(productIndex) ||
+                         b.Another.Contains(productIndex)))
+                    .ToList();
+
+                if (linkedForProduct.Count == 0)
+                    continue;
+
+                var validSelectedIds = new HashSet<string>(
+                    linkedForProduct
+                        .Where(b => b != null && oldSelectedIds.Contains(b.Id))
+                        .Select(b => b.Id),
+                    StringComparer.OrdinalIgnoreCase);
+
+                if (validSelectedIds.Count == 0)
+                    continue;
+
+                foreach (var bio in linkedForProduct)
+                {
+                    if (bio == null)
+                        continue;
+
+                    if (bio.Mandatory.Contains(productIndex))
+                    {
+                        bio.Chosen.Remove(productIndex);
+                        bio.Another.Remove(productIndex);
+                        continue;
+                    }
+
+                    bio.Chosen.Remove(productIndex);
+                    bio.Another.Remove(productIndex);
+
+                    if (validSelectedIds.Contains(bio.Id))
+                    {
+                        if (!bio.Chosen.Contains(productIndex))
+                            bio.Chosen.Add(productIndex);
+                    }
+                    else
+                    {
+                        if (!bio.Another.Contains(productIndex))
+                            bio.Another.Add(productIndex);
+                    }
+                }
+            }
+        }
+
         public void SetOptions(string _SystemOptions, string _LocalOptions)
         {
             if (!string.IsNullOrWhiteSpace(_SystemOptions))
@@ -477,6 +575,8 @@ namespace Laboratory.Gemotest
         }
         public bool Init()
         {
+           // AllocConsole();
+
             last_exception = null;
             try
             {
@@ -705,11 +805,13 @@ namespace Laboratory.Gemotest
 
                 
 
+                Console.WriteLine("\n\n" + requestXml + "\n\n");
 
                 string responseXml = SendSoapRequest(Options.UrlAdress, Options.Login, Options.Password, "get_analysis_result", requestXml);
                 details.ResultsRawXml = responseXml ?? string.Empty;
                 details.ResultsOrderNum = ExtractAnalysisResultOrderNum(responseXml);
                 details.ResultsExtNum = ExtractAnalysisResultExtNum(responseXml);
+                Console.WriteLine(responseXml);
 
                 var response = ParseGetAnalysisResultResponse(responseXml);
                 SaveResultsToOrderDetail(details, response);

@@ -46,7 +46,8 @@
     <Reference Include="ClinicScannerManager">
       <HintPath>..\..\Components\ClinicScannerManager.dll</HintPath>
     </Reference>
-    <Reference Include="ClinicStatisticsCollectionSystemTitles">
+    <Reference Include="ClinicStatisticsCollectionSystemTitles, Version=1.0.0.8, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\Components\ClinicStatisticsCollectionSystemTitles.dll</HintPath>
     </Reference>
     <Reference Include="ContainerMarkerCommon">

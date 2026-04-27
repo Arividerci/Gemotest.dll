@@ -1,4 +1,4 @@
-using iTextSharp.text;
+﻿using iTextSharp.text;
 using System;
 using System.IO;
 using System.Net;
@@ -67,6 +67,7 @@ namespace Laboratory.Gemotest.Options
             }
             catch (Exception ex)
             {
+                Console.WriteLine(ex.Message);
                 throw;
             }
         }
@@ -102,6 +103,7 @@ namespace Laboratory.Gemotest.Options
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"Ошибка проверки last_update.txt: {ex.Message} — обновляем справочники.");
                 return get_all_dictionary();
             }
         }
@@ -131,6 +133,7 @@ namespace Laboratory.Gemotest.Options
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"Ошибка при загрузке справочников: {ex.Message}");
                 CleanupNewFiles();
                 return false;
             }
@@ -272,6 +275,7 @@ namespace Laboratory.Gemotest.Options
                     {
                         firstResponse = response;
                     }
+                    Console.WriteLine($"Текущий чанк: {currentChunk} из {totalChunks}");
                     currentChunk++;
                 } while (currentChunk <= totalChunks);
 
@@ -329,6 +333,7 @@ namespace Laboratory.Gemotest.Options
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"Ошибка при загрузке справочника Services_all_interlocks: {ex.Message}");
                 this.chunk = 0;
                 this.size = 0;
                 throw; 
@@ -569,12 +574,12 @@ xmlns:xsd=""http://www.w3.org/2001/XMLSchema"" xmlns:soapenv=""http://schemas.xm
 xmlns:urn=""urn:OdoctorControllerwsdl""> 
 <soapenv:Header/> 
 <soapenv:Body> 
-    <urn:{methodName} soapenv:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/""> 
-        <params xsi:type=""urn:request_{methodName}""> 
-            <contractor xsi:type=""xsd:string"">{contractor}</contractor> 
-            <hash xsi:type=""xsd:string"">{hash}</hash> 
-        </params> 
-    </urn:{methodName}> 
+<urn:{methodName} soapenv:encodingStyle=""http://schemas.xmlsoap.org/soap/encoding/""> 
+<params xsi:type=""urn:request_{methodName}""> 
+<contractor xsi:type=""xsd:string"">{contractor}</contractor> 
+<hash xsi:type=""xsd:string"">{hash}</hash> 
+</params> 
+</urn:{methodName}> 
 </soapenv:Body> 
 </soapenv:Envelope>";
         }

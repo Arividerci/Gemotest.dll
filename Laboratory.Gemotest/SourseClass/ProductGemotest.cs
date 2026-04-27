@@ -156,6 +156,64 @@ namespace Laboratory.Gemotest.SourseClass
 
         public void PrintRelatedData()
         {
+            if (ServiceType == 3)
+            {
+                Console.WriteLine($"=== Продукт Type 3: {Name} (ID: {ID}, Code: {Code}) - Заблокирован для выбора ===");
+                return;
+            }
+
+            Console.WriteLine($"=== Продукт: {Name} (ID: {ID}, Code: {Code}) ===");
+            Console.WriteLine($" Type: {Type}, ServiceType: {ServiceType}, IsBlocked: {IsBlocked}");
+            Console.WriteLine($" Price: {Price}, IncreasePeriod: {IncreasePeriod}");
+
+            Console.WriteLine($" Локализации ({Localization.Count}):");
+            if (Localization.Any())
+            {
+                var primaryLoc = Localization.FirstOrDefault();
+                Console.WriteLine($"  Основная: ID = {primaryLoc?.id ?? "N/A"}, Name = {primaryLoc?.name ?? "N/A"}");
+                foreach (var loc in Localization)
+                {
+                    Console.WriteLine($"  - ID: {loc.id}, Name: {loc.name}, Archive: {loc.archive}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("  Нет локализаций");
+            }
+
+            Console.WriteLine($" Биоматериалы ({BioMaterials.Count}):");
+            if (BioMaterials.Any())
+            {
+                var primaryBiom = BioMaterials.FirstOrDefault();
+                Console.WriteLine($"  Основной: ID = {primaryBiom?.id ?? "N/A"}, Name = {primaryBiom?.name ?? "N/A"}");
+                foreach (var biom in BioMaterials)
+                {
+                    Console.WriteLine($"  - ID: {biom.id}, Name: {biom.name}, Archive: {biom.archive}");
+                }
+                if (ServiceType == 0) Console.WriteLine("  Логика: Выбрать 1 из списка (PDF стр.17).");
+                else if (ServiceType == 2) Console.WriteLine("  Логика: Все обязательные (PDF стр.21).");
+            }
+            else
+            {
+                Console.WriteLine("  Нет биоматериалов");
+            }
+
+            Console.WriteLine($" Транспорты ({Transports.Count}):");
+            if (Transports.Any())
+            {
+                var primaryTrans = Transports.FirstOrDefault();
+                Console.WriteLine($"  Основной: ID = {primaryTrans?.id ?? "N/A"}, Name = {primaryTrans?.name ?? "N/A"}");
+                foreach (var trans in Transports)
+                {
+                    Console.WriteLine($"  - ID: {trans.id}, Name: {trans.name}, Archive: {trans.archive}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("  Нет транспортов");
+            }
+
+            Console.WriteLine("=== Конец продукта ===\n");
         }
     }
 }
