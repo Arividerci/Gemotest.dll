@@ -91,6 +91,7 @@ namespace Laboratory.Gemotest.GemotestRequests
                 DumpUserSelection(details);
 
                 var rows = BuildSampleServiceRows(details);
+
                 if (rows == null || rows.Count == 0)
                     throw new InvalidOperationException("Не удалось определить пробы для выбранных услуг (rows=0).");
 
@@ -245,6 +246,36 @@ namespace Laboratory.Gemotest.GemotestRequests
                 t.Services.AddRange(normalized);
             }
         }
+
+        private const string SupplementalInstanceSeparator = "__FOR__";
+
+        private static string GetSupplementalBaseIdFromDetailCode(string code)
+        {
+            code = (code ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(code))
+                return string.Empty;
+
+            int pos = code.IndexOf(SupplementalInstanceSeparator, StringComparison.Ordinal);
+
+            if (pos < 0)
+                return code;
+
+            return code.Substring(0, pos).Trim();
+        }
+
+        private static string GetSupplementalSoapId(GemotestDetail detail)
+        {
+            if (detail == null)
+                return string.Empty;
+
+            string code = !string.IsNullOrWhiteSpace(detail.SoapCode)
+                ? detail.SoapCode
+                : detail.Code;
+
+            return GetSupplementalBaseIdFromDetailCode(code);
+        }
+
         private void WriteReturnedBarcodesToDetails(GemotestOrderDetail details, XmlDocument doc)
         {
             if (details == null || details.Samples == null || doc == null)
@@ -1722,44 +1753,53 @@ namespace Laboratory.Gemotest.GemotestRequests
         private List<SoapSupplementalItem> BuildServiceSupplementals(GemotestOrderDetail details)
         {
             var result = new List<SoapSupplementalItem>();
+
             if (details == null || details.Details == null)
                 return result;
+
+            var sentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < details.Details.Count; i++)
             {
                 var d = details.Details[i];
+
                 if (d == null)
                     continue;
 
-                if (string.IsNullOrWhiteSpace(d.Code))
+                string soapId = GetSupplementalSoapId(d);
+
+                if (string.IsNullOrWhiteSpace(soapId))
                     continue;
 
-                if (IsStdInfoField(d.Code))
+                if (IsStdInfoField(soapId))
                     continue;
 
                 string sendValue = NormalizeSupplementalValue(d);
+
                 if (string.IsNullOrWhiteSpace(sendValue))
                     continue;
 
-                var existing = result.FirstOrDefault(x => string.Equals(x.Id, d.Code, StringComparison.OrdinalIgnoreCase));
-                if (existing != null)
-                {
-                    if (string.IsNullOrWhiteSpace(existing.Value) && !string.IsNullOrWhiteSpace(sendValue))
-                        existing.Value = sendValue;
+                string guiCode = !string.IsNullOrWhiteSpace(d.Code)
+                    ? d.Code.Trim()
+                    : soapId;
+
+                string uniqueKey = guiCode + "|" + sendValue;
+
+                if (sentKeys.Contains(uniqueKey))
                     continue;
-                }
+
+                sentKeys.Add(uniqueKey);
 
                 result.Add(new SoapSupplementalItem
                 {
-                    Id = d.Code ?? "",
-                    Name = string.IsNullOrWhiteSpace(d.Name) ? (d.Code ?? "") : d.Name,
+                    Id = soapId,
+                    Name = string.IsNullOrWhiteSpace(d.Name) ? soapId : d.Name,
                     Value = sendValue
                 });
             }
 
             return result;
         }
-
         private static bool IsStdInfoField(string code)
         {
             if (string.IsNullOrWhiteSpace(code))

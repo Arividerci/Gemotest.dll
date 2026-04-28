@@ -198,48 +198,171 @@ namespace Laboratory.Gemotest
             }
         }
 
+        private const string SupplementalInstanceSeparator = "__FOR__";
+
+        private static string MakeSupplementalInstanceFieldId(string supplementalId, string ownerProductGuid)
+        {
+            supplementalId = (supplementalId ?? string.Empty).Trim();
+            ownerProductGuid = (ownerProductGuid ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(supplementalId))
+                return string.Empty;
+
+            if (string.IsNullOrWhiteSpace(ownerProductGuid))
+                return supplementalId;
+
+            return supplementalId + SupplementalInstanceSeparator + ownerProductGuid;
+        }
+
+        private static string GetSupplementalBaseIdFromFieldId(string fieldId)
+        {
+            fieldId = (fieldId ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(fieldId))
+                return string.Empty;
+
+            int pos = fieldId.IndexOf(SupplementalInstanceSeparator, StringComparison.Ordinal);
+            if (pos < 0)
+                return fieldId;
+
+            return fieldId.Substring(0, pos);
+        }
+
+        private string BuildSupplementalInstanceDescription(string supplementalName, string ownerProductName)
+        {
+            supplementalName = (supplementalName ?? string.Empty).Trim();
+            ownerProductName = (ownerProductName ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(supplementalName))
+                supplementalName = "Дополнительная информация";
+
+            if (string.IsNullOrWhiteSpace(ownerProductName))
+                return supplementalName;
+
+            return supplementalName + " для " + ownerProductName;
+        }
+
+        private HashSet<string> BuildAutoServiceIdsForSelectedProducts(OrderModelForGUI model)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (model == null || model.ProductsInfo == null || laboratory.Dicts.ServiceAutoInsert == null)
+                return result;
+
+            foreach (var productInfo in model.ProductsInfo)
+            {
+                if (productInfo == null || string.IsNullOrWhiteSpace(productInfo.Id))
+                    continue;
+
+                List<DictionaryServiceAutoInsert> rows;
+
+                if (!laboratory.Dicts.ServiceAutoInsert.TryGetValue(productInfo.Id, out rows) || rows == null)
+                    continue;
+
+                foreach (var row in rows)
+                {
+                    if (row == null || string.IsNullOrWhiteSpace(row.auto_service_id))
+                        continue;
+
+                    result.Add(row.auto_service_id.Trim());
+                }
+            }
+
+            return result;
+        }
+
         public bool GenerateFields(Order _Order, OrderModelForGUI _Model)
         {
             LastException = null;
+
             try
             {
                 var details = _Order?.OrderDetail as GemotestOrderDetail;
-                if (details == null)
+                if (details == null || _Model == null)
                     return true;
 
                 var fields = new List<FieldInfoForGUI>();
 
-                foreach (var productInfo in _Model.ProductsInfo)
+                var generatedSupplementalBaseIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                var products = _Model.ProductsInfo ?? new List<ProductInfoForGUI>();
+
+                if (laboratory?.Dicts?.ServicesSupplementals != null)
                 {
-                    if (productInfo == null || string.IsNullOrWhiteSpace(productInfo.Id))
-                        continue;
-
-                    if (laboratory?.Dicts?.ServicesSupplementals == null)
-                        continue;
-
-                    if (!laboratory.Dicts.ServicesSupplementals.TryGetValue(productInfo.Id, out var supplementals) || supplementals == null)
-                        continue;
-
-                    foreach (var supp in supplementals)
+                    foreach (var sourceProduct in products)
                     {
-                        if (supp == null)
+                        if (sourceProduct == null || string.IsNullOrWhiteSpace(sourceProduct.Id))
                             continue;
 
-                        string id = (supp.test_id ?? string.Empty).Trim();
-                        if (string.IsNullOrWhiteSpace(id))
+                        string sourceServiceId = NormalizeServiceId(sourceProduct.Id);
+                        if (string.IsNullOrWhiteSpace(sourceServiceId))
                             continue;
 
-                        string description = string.IsNullOrWhiteSpace(supp.name) ? id : supp.name.Trim();
-                        bool isDictionary = !string.IsNullOrWhiteSpace(supp.value);
+                        if (!laboratory.Dicts.ServicesSupplementals.TryGetValue(sourceServiceId, out var supplementals) ||
+                            supplementals == null)
+                        {
+                            continue;
+                        }
 
-                        AddSupplementalFieldIfNotExists(
-                            fields,
-                            id,
-                            description,
-                            productInfo.OrderProductGuid,
-                            supp.required,
-                            isDictionary ? FieldDataType.Dictionary : FieldDataType.Text,
-                            supp.value);
+                        /*
+                         * sourceProduct — это услуга, у которой в справочнике есть services_supplementals.
+                         *
+                         * Если sourceProduct является автодобавляемой услугой,
+                         * например "Взятие биоматериала",
+                         * то поля надо создавать не "для Взятие биоматериала",
+                         * а для основных услуг, которые это взятие автоматически добавили.
+                         *
+                         * Если владельцев не нашли — значит это обычная услуга,
+                         * тогда поле создается для самой sourceProduct.
+                         */
+                        List<ProductInfoForGUI> ownerProducts = GetSupplementalOwnerProducts(sourceProduct);
+
+                        foreach (var supp in supplementals)
+                        {
+                            if (supp == null)
+                                continue;
+
+                            string baseId = (supp.test_id ?? string.Empty).Trim();
+                            if (string.IsNullOrWhiteSpace(baseId))
+                                continue;
+
+                            generatedSupplementalBaseIds.Add(baseId);
+
+                            string baseDescription = string.IsNullOrWhiteSpace(supp.name)
+                                ? baseId
+                                : supp.name.Trim();
+
+                            bool isDictionary = !string.IsNullOrWhiteSpace(supp.value);
+
+                            foreach (var ownerProduct in ownerProducts)
+                            {
+                                if (ownerProduct == null)
+                                    continue;
+
+                                string ownerGuid = ownerProduct.OrderProductGuid;
+                                if (string.IsNullOrWhiteSpace(ownerGuid))
+                                    continue;
+
+                                string ownerName = !string.IsNullOrWhiteSpace(ownerProduct.Name)
+                                    ? ownerProduct.Name.Trim()
+                                    : GetServiceCaption(_Model, ownerProduct.Id);
+
+                                string fieldId = MakeSupplementalInstanceFieldId(baseId, ownerGuid);
+
+                                string description = BuildSupplementalInstanceDescription(
+                                    baseDescription,
+                                    ownerName);
+
+                                AddSupplementalFieldIfNotExists(
+                                    fields,
+                                    fieldId,
+                                    description,
+                                    ownerGuid,
+                                    supp.required,
+                                    isDictionary ? FieldDataType.Dictionary : FieldDataType.Text,
+                                    supp.value);
+                            }
+                        }
                     }
                 }
 
@@ -254,9 +377,30 @@ namespace Laboratory.Gemotest
                         if (string.IsNullOrWhiteSpace(fieldId))
                             continue;
 
-                        FieldInfoForGUI field = fields.FirstOrDefault(x => string.Equals(x.Id, fieldId, StringComparison.OrdinalIgnoreCase));
+                        FieldInfoForGUI field = fields.FirstOrDefault(x =>
+                            string.Equals(x.Id, fieldId, StringComparison.OrdinalIgnoreCase));
+
+                        /*
+                         * Важно:
+                         * если это старое сохраненное поле services_supplementals,
+                         * но в новом списке оно не было создано, значит оно устарело.
+                         *
+                         * Например старое неправильное поле:
+                         * "Взятие биоматериала ... для Взятие биоматериала"
+                         *
+                         * Его нельзя добавлять обратно из details.Details,
+                         * иначе оно снова появится на форме.
+                         */
                         if (field == null)
                         {
+                            string detailBaseId = GetSupplementalBaseIdFromFieldId(fieldId);
+
+                            if (!string.IsNullOrWhiteSpace(detailBaseId) &&
+                                generatedSupplementalBaseIds.Contains(detailBaseId))
+                            {
+                                continue;
+                            }
+
                             field = new FieldInfoForGUI()
                             {
                                 Id = fieldId,
@@ -266,24 +410,114 @@ namespace Laboratory.Gemotest
                                 FieldDataType = FieldDataType.Text,
                             };
 
-                            foreach (var idx in (detail.MandatoryProducts ?? new List<int>()).Concat(detail.OptionalProducts ?? new List<int>()).Distinct())
+                            foreach (var idx in (detail.MandatoryProducts ?? new List<int>())
+                                         .Concat(detail.OptionalProducts ?? new List<int>())
+                                         .Distinct())
                             {
-                                if (idx >= 0 && idx < details.Products.Count)
+                                if (details.Products != null &&
+                                    idx >= 0 &&
+                                    idx < details.Products.Count &&
+                                    details.Products[idx] != null &&
+                                    !string.IsNullOrWhiteSpace(details.Products[idx].OrderProductGuid))
+                                {
                                     field.OrderProductGuidList.Add(details.Products[idx].OrderProductGuid);
+                                }
                             }
 
                             fields.Add(field);
                         }
 
                         field.Value = detail.Value ?? string.Empty;
-                        field.DisplayValue = string.IsNullOrWhiteSpace(detail.DisplayValue) ? (detail.Value ?? string.Empty) : detail.DisplayValue;
+                        field.DisplayValue = string.IsNullOrWhiteSpace(detail.DisplayValue)
+                            ? (detail.Value ?? string.Empty)
+                            : detail.DisplayValue;
+
                         if (!string.IsNullOrWhiteSpace(detail.regex))
                             field.Regex = detail.regex;
                     }
                 }
 
-                _Model.Fields = fields.OrderBy(x => x.Description).ThenBy(x => x.Id).ToList();
+                _Model.Fields = fields
+                    .OrderBy(x => x.Description)
+                    .ThenBy(x => x.Id)
+                    .ToList();
+
                 return true;
+
+                List<ProductInfoForGUI> GetSupplementalOwnerProducts(ProductInfoForGUI sourceProduct)
+                {
+                    var result = new List<ProductInfoForGUI>();
+
+                    if (sourceProduct == null)
+                        return result;
+
+                    string sourceServiceId = NormalizeServiceId(sourceProduct.Id);
+                    if (string.IsNullOrWhiteSpace(sourceServiceId))
+                        return result;
+
+                    /*
+                     * Ищем основные услуги, у которых sourceServiceId указан
+                     * как auto_service_id.
+                     *
+                     * Пример:
+                     * Фосфатаза -> auto_service_id = Tarif1
+                     * СОЭ       -> auto_service_id = Tarif1
+                     *
+                     * Тогда для Tarif1 владельцами будут Фосфатаза и СОЭ.
+                     */
+                    if (laboratory?.Dicts?.ServiceAutoInsert != null)
+                    {
+                        foreach (var possibleOwner in products)
+                        {
+                            if (possibleOwner == null)
+                                continue;
+
+                            string ownerServiceId = NormalizeServiceId(possibleOwner.Id);
+
+                            if (string.IsNullOrWhiteSpace(ownerServiceId))
+                                continue;
+
+                            if (string.Equals(ownerServiceId, sourceServiceId, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            if (!laboratory.Dicts.ServiceAutoInsert.TryGetValue(ownerServiceId, out var autoRows) ||
+                                autoRows == null)
+                            {
+                                continue;
+                            }
+
+                            foreach (var row in autoRows)
+                            {
+                                if (row == null || string.IsNullOrWhiteSpace(row.auto_service_id))
+                                    continue;
+
+                                string autoServiceId = NormalizeServiceId(row.auto_service_id);
+
+                                if (string.Equals(autoServiceId, sourceServiceId, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    if (!result.Any(x =>
+                                            string.Equals(x.OrderProductGuid,
+                                                possibleOwner.OrderProductGuid,
+                                                StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        result.Add(possibleOwner);
+                                    }
+
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    /*
+                     * Если владельцы не найдены, это не автодобавляемая услуга,
+                     * а обычная услуга со своими дополнительными полями.
+                     */
+                    if (result.Count == 0)
+                        result.Add(sourceProduct);
+
+                    return result;
+                }
             }
             catch (Exception exc)
             {
@@ -291,7 +525,6 @@ namespace Laboratory.Gemotest
                 return false;
             }
         }
-
         public bool ValidateGUIModel(OrderModelForGUI _Model)
         {
             LastException = null;
@@ -382,6 +615,26 @@ namespace Laboratory.Gemotest
 
                     PrintServiceMetaToConsole(p.Id);
                     _Model.ProductsInfo.Add(p);
+                }
+
+                if (_Order.State == OrderState.NotSended)
+                {
+                    ApplyAutoInsertServices(details, _Model);
+
+                    for (int i = 0; i < _Model.ProductsInfo.Count; i++)
+                        _Model.ProductsInfo[i].OrderProductGuid = i.ToString();
+
+                    if (details.Products != null)
+                    {
+                        for (int i = 0; i < details.Products.Count; i++)
+                            details.Products[i].OrderProductGuid = i.ToString();
+                    }
+
+                    if (details.BioMaterials == null)
+                        details.BioMaterials = new List<GemotestBioMaterial>();
+
+                    details.BioMaterials.Clear();
+                    details.AddBiomaterialsFromProducts();
                 }
 
                 RebuildBiomaterialGroups(details, _Model);
@@ -2625,14 +2878,8 @@ namespace Laboratory.Gemotest
             }
         }
 
-        private void AddSupplementalFieldIfNotExists(
-            List<FieldInfoForGUI> fields,
-            string id,
-            string description,
-            string orderProductGuid,
-            bool mandatory,
-            FieldDataType fieldType,
-            string rawDictionaryValues)
+        private void AddSupplementalFieldIfNotExists(List<FieldInfoForGUI> fields, string id, string description, string orderProductGuid, bool mandatory,
+            FieldDataType fieldType, string rawDictionaryValues)
         {
             var field = fields.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
             if (field == null)
@@ -2646,7 +2893,7 @@ namespace Laboratory.Gemotest
                 };
 
                 if (fieldType == FieldDataType.Dictionary)
-                    field.DictionaryValues = BuildDictionaryValues(id, rawDictionaryValues);
+                    field.DictionaryValues = BuildDictionaryValues(GetSupplementalBaseIdFromFieldId(id), rawDictionaryValues);
 
                 fields.Add(field);
             }
@@ -2705,7 +2952,7 @@ namespace Laboratory.Gemotest
 
             field.DictionaryValues = field.DictionaryValues ?? new List<FieldDictionaryValue>();
 
-            foreach (var item in BuildDictionaryValues(field.Id, rawDictionaryValues))
+            foreach (var item in BuildDictionaryValues(GetSupplementalBaseIdFromFieldId(field.Id), rawDictionaryValues))
             {
                 if (!field.DictionaryValues.Any(x => string.Equals(x.Value, item.Value, StringComparison.OrdinalIgnoreCase)))
                     field.DictionaryValues.Add(item);

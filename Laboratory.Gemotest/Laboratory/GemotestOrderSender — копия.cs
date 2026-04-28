@@ -91,12 +91,14 @@ namespace Laboratory.Gemotest.GemotestRequests
                 DumpUserSelection(details);
 
                 var rows = BuildSampleServiceRows(details);
+
                 if (rows == null || rows.Count == 0)
                     throw new InvalidOperationException("Не удалось определить пробы для выбранных услуг (rows=0).");
 
                 DumpRows(rows);
 
                 var tubes = GemotestSamplePacker.Pack(rows);
+                NormalizeTubeServices(tubes);
                 if (tubes == null || tubes.Count == 0)
                     throw new InvalidOperationException("Упаковка не дала ни одной пробирки (tubes=0).");
 
@@ -163,6 +165,115 @@ namespace Laboratory.Gemotest.GemotestRequests
                 errorMessage = ex.Message;
                 return false;
             }
+        }
+
+        private void NormalizeTubeServices(IList<TubePlan> tubes)
+        {
+            if (tubes == null) return;
+
+            for (int i = 0; i < tubes.Count; i++)
+            {
+                var t = tubes[i];
+                if (t == null || t.Services == null) continue;
+
+                if (t.Parent != null)
+                {
+                    t.Services.Clear();
+                    continue;
+                }
+
+                var groups = new Dictionary<string, List<TubeServicePlan>>();
+
+                for (int j = 0; j < t.Services.Count; j++)
+                {
+                    var s = t.Services[j];
+                    if (s == null) continue;
+
+                    string key = (s.ServiceId ?? "") + "|" + (s.ComplexId ?? "");
+
+                    List<TubeServicePlan> list;
+                    if (!groups.TryGetValue(key, out list))
+                    {
+                        list = new List<TubeServicePlan>();
+                        groups[key] = list;
+                    }
+
+                    list.Add(s);
+                }
+
+                var normalized = new List<TubeServicePlan>();
+
+                foreach (var pair in groups)
+                {
+                    var group = pair.Value;
+                    if (group == null || group.Count == 0) continue;
+
+                    TubeServicePlan selected = group[0];
+
+                    for (int j = 0; j < group.Count; j++)
+                    {
+                        if (group[j].RefuseFlag == 0)
+                        {
+                            selected = group[j];
+                            break;
+                        }
+                    }
+
+                    int utilizationFlag = 0;
+                    for (int j = 0; j < group.Count; j++)
+                    {
+                        if (group[j].UtilizationFlag == 1)
+                        {
+                            utilizationFlag = 1;
+                            break;
+                        }
+                    }
+
+                    int sc = selected.ServiceCount <= 0 ? 1 : selected.ServiceCount;
+
+                    normalized.Add(new TubeServicePlan
+                    {
+                        ServiceId = selected.ServiceId ?? "",
+                        ComplexId = selected.ComplexId ?? "",
+                        UtilizationFlag = utilizationFlag,
+                        RefuseFlag = selected.RefuseFlag,
+                        ServiceCount = sc,
+                        SharePercent = 100.0 / sc
+                    });
+                }
+
+                t.Services.Clear();
+                t.Services.AddRange(normalized);
+            }
+        }
+
+        private const string SupplementalInstanceSeparator = "__FOR__";
+
+        private static string GetSupplementalBaseIdFromDetailCode(string code)
+        {
+            code = (code ?? string.Empty).Trim();
+
+            if (string.IsNullOrWhiteSpace(code))
+                return string.Empty;
+
+            int pos = code.IndexOf(SupplementalInstanceSeparator, StringComparison.Ordinal);
+
+            if (pos < 0)
+                return code;
+
+            return code.Substring(0, pos).Trim();
+        }
+
+        private static string GetSupplementalSoapId(GemotestDetail detail)
+        {
+            if (detail == null)
+                return string.Empty;
+
+            string code = !string.IsNullOrWhiteSpace(detail.SoapCode)
+                ? detail.SoapCode
+                : detail.Code;
+
+            return GetSupplementalBaseIdFromDetailCode(code);
         }
 
         private void WriteReturnedBarcodesToDetails(GemotestOrderDetail details, XmlDocument doc)
@@ -1026,11 +1137,11 @@ namespace Laboratory.Gemotest.GemotestRequests
             }
         }
         private void AddRowsForSimpleService(
-            string serviceId,
-            string biomaterialId,
-            List<SampleServiceRow> rows,
-            string complexId,
-            string forcedLocalizationId)
+    string serviceId,
+    string biomaterialId,
+    List<SampleServiceRow> rows,
+    string complexId,
+    string forcedLocalizationId)
         {
             if (string.IsNullOrEmpty(serviceId))
                 return;
@@ -1043,94 +1154,29 @@ namespace Laboratory.Gemotest.GemotestRequests
                 baseList = new List<DictionarySamplesServices>();
             }
 
-            var list = baseList;
-
-            bool biomaterialFilterApplied = false;
-
-            if (!string.IsNullOrEmpty(biomaterialId))
-            {
-                var biomFiltered = list.Where(p =>
-                    string.Equals(p.biomaterial_id ?? "", biomaterialId, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(p.microbiology_biomaterial_id ?? "", biomaterialId, StringComparison.OrdinalIgnoreCase)
-                ).ToList();
-
-                if (biomFiltered.Count == 0)
-                    return;
-
-                list = biomFiltered;
-                biomaterialFilterApplied = true;
-            }
-            if (biomaterialFilterApplied)
-            {
-                var selectedSampleIds = new HashSet<int>(
-                    list.Where(x => x != null)
-                        .Select(x => ToInt(x.sample_id, 0))
-                        .Where(x => x > 0)
-                );
-
-                var selectedKeys = new HashSet<string>(
-                    list.Where(x => x != null)
-                        .Select(x =>
-                            ToInt(x.sample_id, 0).ToString(CultureInfo.InvariantCulture) + "|" +
-                            (x.biomaterial_id ?? "") + "|" +
-                            (x.microbiology_biomaterial_id ?? "") + "|" +
-                            (x.localization_id ?? "") + "|" +
-                            ToInt(x.primary_sample_id, 0).ToString(CultureInfo.InvariantCulture)
-                        ),
-                    StringComparer.OrdinalIgnoreCase
-                );
-
-                var missingRows = baseList
-                    .Where(x => x != null)
-                    .Where(x =>
-                    {
-                        int sid = ToInt(x.sample_id, 0);
-                        if (sid <= 0)
-                            return false;
-
-                        string key =
-                            sid.ToString(CultureInfo.InvariantCulture) + "|" +
-                            (x.biomaterial_id ?? "") + "|" +
-                            (x.microbiology_biomaterial_id ?? "") + "|" +
-                            (x.localization_id ?? "") + "|" +
-                            ToInt(x.primary_sample_id, 0).ToString(CultureInfo.InvariantCulture);
-
-                        return !selectedKeys.Contains(key);
-                    })
-                    .ToList();
-
-                list.AddRange(missingRows);
-            }
+            var list = baseList.ToList();
 
             if (!string.IsNullOrEmpty(forcedLocalizationId))
             {
                 list = list.Where(p =>
+                    p != null &&
                     string.Equals(p.localization_id ?? "", forcedLocalizationId, StringComparison.OrdinalIgnoreCase)
                 ).ToList();
 
                 if (list.Count == 0)
                     return;
             }
-            var distinctLocalizations = list
-                .Where(x => x != null)
-                .Select(x => (x.localization_id ?? "").Trim())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
 
             for (int i = 0; i < list.Count; i++)
             {
                 var p = list[i];
-
-                if (IsStandalonePrimaryRow(p, list))
-                {
-                    Console.WriteLine(
-                        "[Gemotest] skip standalone primary row: service=" + serviceId +
-                        "; sample_id=" + (p.sample_id.ToString() ?? "") +
-                        "; primary_sample_id=" + (p.primary_sample_id.ToString() ?? ""));
+                if (p == null)
                     continue;
-                }
+
                 int execSampleId = ToInt(p.sample_id, 0);
+                if (execSampleId <= 0)
+                    continue;
+
                 int serviceCount = ToInt(p.service_count, 1);
 
                 int primaryRaw = ToInt(p.primary_sample_id, 0);
@@ -1151,12 +1197,13 @@ namespace Laboratory.Gemotest.GemotestRequests
                 {
                     DictionarySamples primSample;
                     _dictionaries.Samples.TryGetValue(primarySampleId.Value.ToString(CultureInfo.InvariantCulture), out primSample);
+
                     primName = primSample != null ? (primSample.name ?? "") : "";
                     primTransport = primSample != null ? (primSample.transport_id ?? "") : "";
                     primUtilize = primSample != null && primSample.utilize;
                 }
 
-                var row = new SampleServiceRow
+                rows.Add(new SampleServiceRow
                 {
                     ServiceId = serviceId ?? "",
                     ComplexId = complexId ?? "",
@@ -1176,12 +1223,8 @@ namespace Laboratory.Gemotest.GemotestRequests
                     LocalizationId = p.localization_id ?? "",
 
                     ServiceCount = serviceCount <= 0 ? 1 : serviceCount
-                };
-
-                rows.Add(row);
+                });
             }
-
-
         }
 
         private void GetSampleIdentifiersRange(int count, out long rangeStart, out long rangeEnd)
@@ -1265,18 +1308,8 @@ namespace Laboratory.Gemotest.GemotestRequests
             if (reNode.Count > 0) long.TryParse(reNode[0].InnerText, NumberStyles.Integer, CultureInfo.InvariantCulture, out rangeEnd);
         }
 
-        private string BuildCreateOrderEnvelopeVariantA(
-            string extNum,
-            string orderNum,
-            string contractor,
-            string hash,
-            string doctor,
-            string comment,
-            Patient patient,
-            GemotestOrderDetail details,
-            IList<SoapTopServiceItem> services,
-            IList<TubePlan> tubes,
-            IList<SoapSupplementalItem> supplementals)
+        private string BuildCreateOrderEnvelopeVariantA(string extNum,  string orderNum, string contractor,  string hash,  string doctor, string comment,
+            Patient patient, GemotestOrderDetail details, IList<SoapTopServiceItem> services,  IList<TubePlan> tubes, IList<SoapSupplementalItem> supplementals)
         {
             int svcCount = services != null ? services.Count : 0;
             int tubesCount = tubes != null ? tubes.Count : 0;
@@ -1487,29 +1520,57 @@ namespace Laboratory.Gemotest.GemotestRequests
                     AppendSimpleElement(sb, "biomaterial_id", t.BiomaterialId, null);
                     AppendSimpleElement(sb, "transport_id", t.TransportId, null);
 
-                    int osCount = t.Services != null ? t.Services.Count : 0;
-                    sb.Append("<services xsi:type=\"urn:order_sample_serviceArray\" soapenc:arrayType=\"urn:order_sample_service[")
-                      .Append(osCount.ToString(CultureInfo.InvariantCulture))
-                      .Append("]\">");
+                    List<TubeServicePlan> sampleServices = new List<TubeServicePlan>();
 
                     if (t.Services != null)
                     {
                         for (int k = 0; k < t.Services.Count; k++)
                         {
-                            var ss = t.Services[k];
-                            if (ss == null) continue;
+                            TubeServicePlan ss = t.Services[k];
 
-                            sb.Append("<item>");
-                            AppendSimpleElement(sb, "service_id", ss.ServiceId, "xsd:string");
-                            AppendSimpleElement(sb, "complex_id", ss.ComplexId, "xsd:string");
-                            sb.Append("<utilization_flag xsi:type=\"xsd:int\">")
-                              .Append(ss.UtilizationFlag.ToString(CultureInfo.InvariantCulture))
-                              .Append("</utilization_flag>");
-                            sb.Append("<refuse_flag xsi:type=\"xsd:int\">")
-                              .Append(ss.RefuseFlag.ToString(CultureInfo.InvariantCulture))
-                              .Append("</refuse_flag>");
-                            sb.Append("</item>");
+                            if (ss == null)
+                                continue;
+
+                            if (string.IsNullOrWhiteSpace(ss.ServiceId))
+                                continue;
+
+                            sampleServices.Add(ss);
                         }
+                    }
+
+                    if (t.Parent != null && sampleServices.Count == 0)
+                    {
+                        throw new InvalidOperationException(
+                            "Ошибка формирования заказа Gemotest: aliquot-проба sample_id=" +
+                            t.SampleId.ToString(CultureInfo.InvariantCulture) +
+                            " имеет parentSample=" +
+                            t.Parent.SampleId.ToString(CultureInfo.InvariantCulture) +
+                            ", но не содержит ни одной услуги в order_sample/services.");
+                    }
+
+                    int osCount = sampleServices.Count;
+
+                    sb.Append("<services xsi:type=\"urn:order_sample_serviceArray\" soapenc:arrayType=\"urn:order_sample_service[")
+                      .Append(osCount.ToString(CultureInfo.InvariantCulture))
+                      .Append("]\">");
+
+                    for (int k = 0; k < sampleServices.Count; k++)
+                    {
+                        TubeServicePlan ss = sampleServices[k];
+
+                        sb.Append("<item>");
+                        AppendSimpleElement(sb, "service_id", ss.ServiceId, "xsd:string");
+                        AppendSimpleElement(sb, "complex_id", ss.ComplexId, "xsd:string");
+
+                        sb.Append("<utilization_flag xsi:type=\"xsd:int\">")
+                          .Append(ss.UtilizationFlag.ToString(CultureInfo.InvariantCulture))
+                          .Append("</utilization_flag>");
+
+                        sb.Append("<refuse_flag xsi:type=\"xsd:int\">")
+                          .Append(ss.RefuseFlag.ToString(CultureInfo.InvariantCulture))
+                          .Append("</refuse_flag>");
+
+                        sb.Append("</item>");
                     }
 
                     sb.Append("</services>");
@@ -1692,44 +1753,53 @@ namespace Laboratory.Gemotest.GemotestRequests
         private List<SoapSupplementalItem> BuildServiceSupplementals(GemotestOrderDetail details)
         {
             var result = new List<SoapSupplementalItem>();
+
             if (details == null || details.Details == null)
                 return result;
+
+            var sentKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < details.Details.Count; i++)
             {
                 var d = details.Details[i];
+
                 if (d == null)
                     continue;
 
-                if (string.IsNullOrWhiteSpace(d.Code))
+                string soapId = GetSupplementalSoapId(d);
+
+                if (string.IsNullOrWhiteSpace(soapId))
                     continue;
 
-                if (IsStdInfoField(d.Code))
+                if (IsStdInfoField(soapId))
                     continue;
 
                 string sendValue = NormalizeSupplementalValue(d);
+
                 if (string.IsNullOrWhiteSpace(sendValue))
                     continue;
 
-                var existing = result.FirstOrDefault(x => string.Equals(x.Id, d.Code, StringComparison.OrdinalIgnoreCase));
-                if (existing != null)
-                {
-                    if (string.IsNullOrWhiteSpace(existing.Value) && !string.IsNullOrWhiteSpace(sendValue))
-                        existing.Value = sendValue;
+                string guiCode = !string.IsNullOrWhiteSpace(d.Code)
+                    ? d.Code.Trim()
+                    : soapId;
+
+                string uniqueKey = guiCode + "|" + sendValue;
+
+                if (sentKeys.Contains(uniqueKey))
                     continue;
-                }
+
+                sentKeys.Add(uniqueKey);
 
                 result.Add(new SoapSupplementalItem
                 {
-                    Id = d.Code ?? "",
-                    Name = string.IsNullOrWhiteSpace(d.Name) ? (d.Code ?? "") : d.Name,
+                    Id = soapId,
+                    Name = string.IsNullOrWhiteSpace(d.Name) ? soapId : d.Name,
                     Value = sendValue
                 });
             }
 
             return result;
         }
-
         private static bool IsStdInfoField(string code)
         {
             if (string.IsNullOrWhiteSpace(code))
@@ -2084,7 +2154,7 @@ namespace Laboratory.Gemotest.GemotestRequests
 
             return fallback;
         }
-
+            
         private void DumpSupplementals(List<SoapSupplementalItem> supplementals)
         {
             Console.WriteLine();

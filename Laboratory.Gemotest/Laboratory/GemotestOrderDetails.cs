@@ -53,6 +53,7 @@ namespace Laboratory.Gemotest.SourseClass
         public string Code { get; set; }
         public string Name { get; set; }
         public string Value { get; set; }
+        public string SoapCode { get; set; }
         public List<int> MandatoryProducts { get; set; }
         public List<int> OptionalProducts { get; set; }
         public int? dictionaryId { get; set; } = null;
@@ -137,6 +138,25 @@ namespace Laboratory.Gemotest.SourseClass
     }
 
     [Serializable]
+    public class GemotestSupplementalInstance
+    {
+        public string InstanceKey { get; set; }
+
+        public string SupplementalId { get; set; }
+        public string SupplementalName { get; set; }
+
+        public string AutoServiceId { get; set; }
+        public string AutoServiceGuid { get; set; }
+        public string AutoServiceName { get; set; }
+
+        public string OwnerProductId { get; set; }
+        public string OwnerProductGuid { get; set; }
+        public string OwnerProductName { get; set; }
+
+        public bool Required { get; set; }
+    }
+
+    [Serializable]  
     public class GemotestOrderDetail : BaseOrderDetail
     {
         public string ResultsRawXml { get; set; }
@@ -157,6 +177,7 @@ namespace Laboratory.Gemotest.SourseClass
         public string DefectsMessages { get; set; }
         public List<GemotestResultDetail> Results { get; set; }
         public List<GemotestAttachmentDetail> Attachments { get; set; }
+        public List<GemotestSupplementalInstance> SupplementalInstances { get; set; }
         public GemotestOrderDetail() : base()
         {
             ResultsRawXml = string.Empty;
@@ -170,7 +191,7 @@ namespace Laboratory.Gemotest.SourseClass
             Results = new List<GemotestResultDetail>();
             Attachments = new List<GemotestAttachmentDetail>();
             LaboratoryType = (LaboratoryType)24;
-
+            SupplementalInstances = new List<GemotestSupplementalInstance>();
         }
 
         [Serializable]
