@@ -575,7 +575,7 @@ namespace Laboratory.Gemotest
         }
         public bool Init()
         {
-            AllocConsole();
+           // AllocConsole();
 
             last_exception = null;
             try
